@@ -1,4 +1,4 @@
-"""
+ """
 Smart Loan Decision System - Main Application
 A comprehensive ML-based loan approval system with fraud detection and explainability
 """
@@ -296,17 +296,68 @@ def load_models():
     """Load all trained models - auto-train if missing or incompatible"""
     import subprocess
     import sys
+    import os
     
+    # Check if models directory and files exist
+    models_exist = (
+        os.path.exists('models/preprocessor.pkl') and
+        os.path.exists('models/fraud_detection_model.pkl') and
+        os.path.exists('models/loan_approval_model.pkl')
+    )
+    
+    # If models don't exist, train them
+    if not models_exist:
+        st.warning("🔄 Models not found. Training models for the first time...")
+        st.info("⏳ This will take 1-2 minutes. Please wait...")
+        
+        try:
+            # Create models directory if it doesn't exist
+            os.makedirs('models', exist_ok=True)
+            
+            # Run training
+            with st.spinner("🤖 Training ML models... Please wait..."):
+                result = subprocess.run(
+                    [sys.executable, 'train_models.py'],
+                    capture_output=True,
+                    text=True,
+                    timeout=180  # 3 minutes timeout
+                )
+                
+                if result.returncode == 0:
+                    st.success("✅ Models trained successfully!")
+                    st.balloons()
+                    # Force reload to use new models
+                    st.cache_resource.clear()
+                    st.rerun()
+                else:
+                    st.error(f"❌ Training failed!")
+                    st.code(result.stderr)
+                    st.info("💡 Please check the error above and try restarting the app.")
+                    return None, None, None, None
+                    
+        except subprocess.TimeoutExpired:
+            st.error("⏱️ Training timeout (>3 minutes). Please try again or contact support.")
+            return None, None, None, None
+        except Exception as train_error:
+            st.error(f"❌ Training error: {str(train_error)}")
+            st.info("💡 Please try restarting the app or contact support.")
+            return None, None, None, None
+    
+    # Try to load existing models
     try:
-        # Try to load models
         preprocessor = joblib.load('models/preprocessor.pkl')
         fraud_detector = joblib.load('models/fraud_detection_model.pkl')
         approval_predictor = LoanApprovalPredictor()
         approval_predictor.load_models('models/loan_approval_model.pkl')
         
-        # Load training data for SHAP
-        train_data = pd.read_csv('data/processed/cleaned_loan_data.csv')
-        X_train = train_data.drop('Loan_Status', axis=1)
+        # Load training data for SHAP (if processed data exists)
+        if os.path.exists('data/processed/cleaned_loan_data.csv'):
+            train_data = pd.read_csv('data/processed/cleaned_loan_data.csv')
+            X_train = train_data.drop('Loan_Status', axis=1)
+        else:
+            # If processed data doesn't exist, create a dummy X_train
+            # This happens on first run before training
+            X_train = None
         
         return preprocessor, fraud_detector, approval_predictor, X_train
         
@@ -315,12 +366,12 @@ def load_models():
         
         # Check if it's a version mismatch error
         if "can't get attribute" in error_msg.lower() or "unpickle" in error_msg.lower():
-            st.warning("🔄 Models need to be retrained for this Python version...")
-            st.info("⏳ Training models (this will take 1-2 minutes on first run)...")
+            st.warning("🔄 Model version mismatch detected!")
+            st.info("⏳ Retraining models for this Python version (1-2 minutes)...")
             
             try:
                 # Run training
-                with st.spinner("Training ML models... Please wait..."):
+                with st.spinner("🤖 Retraining ML models... Please wait..."):
                     result = subprocess.run(
                         [sys.executable, 'train_models.py'],
                         capture_output=True,
@@ -329,10 +380,14 @@ def load_models():
                     )
                     
                     if result.returncode == 0:
-                        st.success("✅ Models trained successfully!")
-                        st.experimental_rerun()  # Reload the app
+                        st.success("✅ Models retrained successfully!")
+                        st.balloons()
+                        # Clear cache and reload
+                        st.cache_resource.clear()
+                        st.rerun()
                     else:
-                        st.error(f"❌ Training failed: {result.stderr}")
+                        st.error(f"❌ Retraining failed!")
+                        st.code(result.stderr)
                         return None, None, None, None
                         
             except subprocess.TimeoutExpired:
@@ -343,8 +398,8 @@ def load_models():
                 return None, None, None, None
         else:
             # Other errors
-            st.error(f"Error loading models: {error_msg}")
-            st.info("💡 Try restarting the app or contact support.")
+            st.error(f"❌ Error loading models: {error_msg}")
+            st.info("💡 Try restarting the app. If the problem persists, contact support.")
             return None, None, None, None
 
 def home_page():
@@ -519,7 +574,31 @@ def main_app():
     preprocessor, fraud_detector, approval_predictor, X_train = load_models()
     
     if preprocessor is None:
-        st.error("⚠️ Models not loaded. Please train models first by running: `python train_models.py`")
+        st.error("⚠️ Models failed to load or train.")
+        st.info("""
+        **Troubleshooting Steps:**
+        1. Try refreshing the page (F5)
+        2. Clear browser cache and refresh
+        3. Wait a few minutes and try again
+        4. Contact support if issue persists
+        
+        **For Streamlit Cloud:**
+        - Models should train automatically on first deployment
+        - Check the app logs for training errors
+        """)
+        
+        # Show basic info that doesn't need models
+        st.markdown("---")
+        st.markdown("### ℹ️ About This System")
+        st.write("""
+        The Smart Loan Decision System uses AI to:
+        - Detect fraudulent applications
+        - Predict loan approval likelihood
+        - Assess risk levels
+        - Calculate optimal loan amounts
+        
+        Models are currently being set up. Please check back in a moment.
+        """)
         return
     
     # Page routing
