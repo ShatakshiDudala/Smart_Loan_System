@@ -293,8 +293,12 @@ def logout():
 # Load models
 @st.cache_resource
 def load_models():
-    """Load all trained models"""
+    """Load all trained models - auto-train if missing or incompatible"""
+    import subprocess
+    import sys
+    
     try:
+        # Try to load models
         preprocessor = joblib.load('models/preprocessor.pkl')
         fraud_detector = joblib.load('models/fraud_detection_model.pkl')
         approval_predictor = LoanApprovalPredictor()
@@ -305,10 +309,43 @@ def load_models():
         X_train = train_data.drop('Loan_Status', axis=1)
         
         return preprocessor, fraud_detector, approval_predictor, X_train
+        
     except Exception as e:
-        st.error(f"Error loading models: {str(e)}")
-        st.info("Please run 'train_models.py' first to train the models.")
-        return None, None, None, None
+        error_msg = str(e)
+        
+        # Check if it's a version mismatch error
+        if "can't get attribute" in error_msg.lower() or "unpickle" in error_msg.lower():
+            st.warning("🔄 Models need to be retrained for this Python version...")
+            st.info("⏳ Training models (this will take 1-2 minutes on first run)...")
+            
+            try:
+                # Run training
+                with st.spinner("Training ML models... Please wait..."):
+                    result = subprocess.run(
+                        [sys.executable, 'train_models.py'],
+                        capture_output=True,
+                        text=True,
+                        timeout=180  # 3 minutes timeout
+                    )
+                    
+                    if result.returncode == 0:
+                        st.success("✅ Models trained successfully!")
+                        st.experimental_rerun()  # Reload the app
+                    else:
+                        st.error(f"❌ Training failed: {result.stderr}")
+                        return None, None, None, None
+                        
+            except subprocess.TimeoutExpired:
+                st.error("⏱️ Training timeout - please try again")
+                return None, None, None, None
+            except Exception as train_error:
+                st.error(f"❌ Training error: {str(train_error)}")
+                return None, None, None, None
+        else:
+            # Other errors
+            st.error(f"Error loading models: {error_msg}")
+            st.info("💡 Try restarting the app or contact support.")
+            return None, None, None, None
 
 def home_page():
     """Home/Dashboard page"""
