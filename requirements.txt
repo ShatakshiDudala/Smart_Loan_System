@@ -1,3 +1,6 @@
+shap
+numba
+llvmlite
 streamlit
 pandas
 numpy
