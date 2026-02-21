@@ -10,6 +10,8 @@ import joblib
 import os
 import sys
 
+sys.stdout.reconfigure(encoding='utf-8')
+
 # Add utils to path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'utils'))
 

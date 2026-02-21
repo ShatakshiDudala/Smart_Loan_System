@@ -1,4 +1,4 @@
- """
+"""
 Smart Loan Decision System - Main Application
 A comprehensive ML-based loan approval system with fraud detection and explainability
 """
@@ -291,59 +291,14 @@ def logout():
     st.rerun()
 
 # Load models
-@st.cache_resource
 def load_models():
     """Load all trained models - auto-train if missing or incompatible"""
     import subprocess
     import sys
     import os
+    import time
     
-    # Check if models directory and files exist
-    models_exist = (
-        os.path.exists('models/preprocessor.pkl') and
-        os.path.exists('models/fraud_detection_model.pkl') and
-        os.path.exists('models/loan_approval_model.pkl')
-    )
-    
-    # If models don't exist, train them
-    if not models_exist:
-        st.warning("🔄 Models not found. Training models for the first time...")
-        st.info("⏳ This will take 1-2 minutes. Please wait...")
-        
-        try:
-            # Create models directory if it doesn't exist
-            os.makedirs('models', exist_ok=True)
-            
-            # Run training
-            with st.spinner("🤖 Training ML models... Please wait..."):
-                result = subprocess.run(
-                    [sys.executable, 'train_models.py'],
-                    capture_output=True,
-                    text=True,
-                    timeout=180  # 3 minutes timeout
-                )
-                
-                if result.returncode == 0:
-                    st.success("✅ Models trained successfully!")
-                    st.balloons()
-                    # Force reload to use new models
-                    st.cache_resource.clear()
-                    st.rerun()
-                else:
-                    st.error(f"❌ Training failed!")
-                    st.code(result.stderr)
-                    st.info("💡 Please check the error above and try restarting the app.")
-                    return None, None, None, None
-                    
-        except subprocess.TimeoutExpired:
-            st.error("⏱️ Training timeout (>3 minutes). Please try again or contact support.")
-            return None, None, None, None
-        except Exception as train_error:
-            st.error(f"❌ Training error: {str(train_error)}")
-            st.info("💡 Please try restarting the app or contact support.")
-            return None, None, None, None
-    
-    # Try to load existing models
+    # Try to load models directly first
     try:
         preprocessor = joblib.load('models/preprocessor.pkl')
         fraud_detector = joblib.load('models/fraud_detection_model.pkl')
@@ -351,55 +306,103 @@ def load_models():
         approval_predictor.load_models('models/loan_approval_model.pkl')
         
         # Load training data for SHAP (if processed data exists)
-        if os.path.exists('data/processed/cleaned_loan_data.csv'):
-            train_data = pd.read_csv('data/processed/cleaned_loan_data.csv')
-            X_train = train_data.drop('Loan_Status', axis=1)
-        else:
-            # If processed data doesn't exist, create a dummy X_train
-            # This happens on first run before training
+        X_train = None
+        try:
+            if os.path.exists('data/processed/cleaned_loan_data.csv'):
+                train_data = pd.read_csv('data/processed/cleaned_loan_data.csv')
+                if 'Loan_Status' in train_data.columns:
+                    X_train = train_data.drop('Loan_Status', axis=1)
+        except:
             X_train = None
         
+        # Success! Models loaded
         return preprocessor, fraud_detector, approval_predictor, X_train
         
+    except FileNotFoundError as fnf_error:
+        # Models don't exist - need to train
+        st.warning("🔄 Models not found. Training models for the first time...")
+        st.info("⏳ This will take 1-2 minutes. Please wait...")
+        
+        # Create directories
+        os.makedirs('models', exist_ok=True)
+        os.makedirs('data/processed', exist_ok=True)
+        
+        try:
+            # Run training
+            with st.spinner("🤖 Training ML models... Please wait..."):
+                result = subprocess.run(
+                    [sys.executable, 'train_models.py'],
+                    capture_output=True,
+                    text=True,
+                    timeout=300  # 5 minutes
+                )
+                
+                if result.returncode == 0:
+                    st.success("✅ Models trained successfully!")
+                    st.balloons()
+                    st.info("🔄 Reloading app with new models...")
+                    time.sleep(2)
+                    st.rerun()
+                else:
+                    st.error("❌ Training failed!")
+                    st.error("**Error Output:**")
+                    st.code(result.stderr if result.stderr else "No stderr")
+                    st.info("**Standard Output:**")
+                    st.code(result.stdout if result.stdout else "No stdout")
+                    return None, None, None, None
+                    
+        except subprocess.TimeoutExpired:
+            st.error("⏱️ Training timeout (>5 minutes)")
+            st.info("The training is taking longer than expected. This might be due to:")
+            st.info("- Large dataset")
+            st.info("- Limited resources on free tier")
+            st.info("- Network issues")
+            return None, None, None, None
+        except Exception as train_error:
+            st.error(f"❌ Unexpected training error: {str(train_error)}")
+            import traceback
+            st.code(traceback.format_exc())
+            return None, None, None, None
+    
     except Exception as e:
         error_msg = str(e)
         
-        # Check if it's a version mismatch error
-        if "can't get attribute" in error_msg.lower() or "unpickle" in error_msg.lower():
+        # Check if it's a version/pickle mismatch
+        if any(keyword in error_msg.lower() for keyword in ['unpickle', "can't get attribute", 'unsupported pickle', 'protocol']):
             st.warning("🔄 Model version mismatch detected!")
-            st.info("⏳ Retraining models for this Python version (1-2 minutes)...")
+            st.info("⏳ Retraining models for this environment...")
+            st.info(f"**Error detected:** {error_msg[:100]}...")
             
             try:
-                # Run training
-                with st.spinner("🤖 Retraining ML models... Please wait..."):
+                with st.spinner("🤖 Retraining models..."):
                     result = subprocess.run(
                         [sys.executable, 'train_models.py'],
                         capture_output=True,
                         text=True,
-                        timeout=180  # 3 minutes timeout
+                        timeout=300
                     )
                     
                     if result.returncode == 0:
                         st.success("✅ Models retrained successfully!")
                         st.balloons()
-                        # Clear cache and reload
-                        st.cache_resource.clear()
+                        time.sleep(2)
                         st.rerun()
                     else:
-                        st.error(f"❌ Retraining failed!")
-                        st.code(result.stderr)
+                        st.error("❌ Retraining failed!")
+                        st.code(result.stderr if result.stderr else result.stdout)
                         return None, None, None, None
                         
-            except subprocess.TimeoutExpired:
-                st.error("⏱️ Training timeout - please try again")
-                return None, None, None, None
-            except Exception as train_error:
-                st.error(f"❌ Training error: {str(train_error)}")
+            except Exception as retrain_error:
+                st.error(f"❌ Retraining error: {str(retrain_error)}")
                 return None, None, None, None
         else:
-            # Other errors
-            st.error(f"❌ Error loading models: {error_msg}")
-            st.info("💡 Try restarting the app. If the problem persists, contact support.")
+            # Unknown error
+            st.error(f"❌ Unexpected error loading models:")
+            st.code(error_msg)
+            st.info("**Troubleshooting:**")
+            st.info("1. Try refreshing the page")
+            st.info("2. Check that data/raw/loan_data.csv exists")
+            st.info("3. Contact support if issue persists")
             return None, None, None, None
 
 def home_page():
@@ -2379,6 +2382,105 @@ def about_page():
 def main():
     """Main application entry point"""
     
+    # CRITICAL: Check and train models BEFORE anything else
+    import os
+    import subprocess
+    import sys
+    
+    required_files = [
+        'models/preprocessor.pkl',
+        'models/fraud_detection_model.pkl',
+        'models/loan_approval_model.pkl'
+    ]
+    
+    models_exist = all(os.path.exists(f) for f in required_files)
+    
+    if not models_exist:
+        st.markdown('<div class="main-header"><h1>🏦 Smart Loan Decision System</h1><p>Initial Setup Required</p></div>', unsafe_allow_html=True)
+        
+        st.warning("⚠️ **Models Not Found - First Time Setup**")
+        st.info("""
+        This appears to be the first time the app is running on this server.
+        
+        **Machine Learning models need to be trained before the system can operate.**
+        
+        ⏱️ **Training Time:** 1-2 minutes (one-time only)
+        
+        Click the button below to start training:
+        """)
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            if st.button("🚀 Train Models Now", type="primary", use_container_width=True):
+                # Create directories
+                os.makedirs('models', exist_ok=True)
+                os.makedirs('data/processed', exist_ok=True)
+                
+                # Run training with progress
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                status_text.info("📦 Initializing training...")
+                progress_bar.progress(10)
+                
+                try:
+                    status_text.info("🤖 Training ML models... (this may take 1-2 minutes)")
+                    progress_bar.progress(20)
+                    
+                    result = subprocess.run(
+                        [sys.executable, 'train_models.py'],
+                        capture_output=True,
+                        text=True,
+                        timeout=300  # 5 minutes
+                    )
+                    
+                    if result.returncode == 0:
+                        progress_bar.progress(100)
+                        status_text.success("✅ Models trained successfully!")
+                        st.balloons()
+                        
+                        st.success("🎉 **Training Complete!**")
+                        st.info("The app will reload automatically in 2 seconds...")
+                        
+                        with st.expander("📋 View Training Log"):
+                            st.code(result.stdout)
+                        
+                        # Auto reload
+                        import time
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        progress_bar.empty()
+                        status_text.error("❌ Training failed!")
+                        st.error("**Error Output:**")
+                        st.code(result.stderr if result.stderr else "No error message")
+                        st.error("**Standard Output:**")
+                        st.code(result.stdout if result.stdout else "No output")
+                        st.info("💡 Try refreshing the page or contact support.")
+                        
+                except subprocess.TimeoutExpired:
+                    st.error("⏱️ Training took too long (>5 minutes)")
+                    st.info("This might be due to limited resources. Try refreshing and running again.")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+                    st.code(str(e))
+        
+        st.markdown("---")
+        st.info("""
+        **Why is this needed?**
+        
+        Machine Learning models cannot be pre-trained and committed to Git because:
+        - They're specific to the Python version running on this server
+        - Pickle files aren't compatible across different Python versions
+        - Training on-demand ensures compatibility
+        
+        **This only needs to be done once per deployment.**
+        """)
+        
+        st.stop()  # Stop here until models are trained
+    
+    # Models exist - proceed to normal app
     # Check if user is logged in
     if not st.session_state.logged_in:
         # Show signup or login page
